@@ -14,14 +14,11 @@ def load_dataset_stats(dataset_name, device="cpu"):
     data_mean = loads_file("parameter_mean.pt") # (d_features,)
     data_std = loads_file("parameter_std.pt") # (d_features,)
 
-    flux_stats = loads_file("flux_stats.pt") # (2,)
-    flux_mean, flux_std = flux_stats
-
     return {
         "data_mean": data_mean,
         "data_std": data_std,
-        "flux_mean": flux_mean,
-        "flux_std": flux_std,
+        "flux_mean": None,
+        "flux_std": None,
     }
 
 def load_static_data(dataset_name, device="cpu"):
