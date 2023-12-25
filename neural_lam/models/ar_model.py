@@ -21,7 +21,7 @@ class ARModel(pl.LightningModule):
         # Some constants useful for sub-classes
         self.batch_static_feature_dim = 1 # Only open water?
         self.grid_forcing_dim = 5*3 # 5 features for 3 time-step window
-        self.grid_state_dim = 17
+        self.grid_state_dim = 39
 
         # Load static features for grid/data
         static_data_dict = utils.load_static_data(args.dataset)
@@ -49,7 +49,7 @@ class ARModel(pl.LightningModule):
         self.N_interior = torch.sum(self.interior_mask
                 ).item() # Number of grid nodes to predict
 
-        self.step_length = args.step_length # Number of hours per pred. step
+        self.step_length = 1 #args.step_length # Number of hours per pred. step
         self.val_maes = []
         self.test_maes = []
         self.test_mses = []
