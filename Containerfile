@@ -4,7 +4,7 @@ RUN apt -y install git vim texlive cm-super
 
 WORKDIR /
 
-RUN git clone https://github.com/mpartio/neural-lam.git
+RUN git clone -b meps_analysis https://github.com/mpartio/neural-lam.git
 
 WORKDIR /neural-lam
 
