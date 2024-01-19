@@ -92,10 +92,16 @@ class AnalysisDataset(torch.utils.data.Dataset):
 
         self.samples = []
         prev = 0
-        for i in range(self.sample_length, len(times), self.sample_length):
+
+        for i in range(self.sample_length, len(times) + 1, self.sample_length):
             self.samples.append({"times": times[prev:i], "start": prev, "stop": i})
             prev = i
 
+        assert (
+            len(self.samples) > 0
+        ), "No samples found from {}, required sample length: {} data length: {}".format(
+            filename, self.sample_length, len(times)
+        )
         print("Dataset initialized, length: {}".format(len(self.samples)))
 
     def __len__(self):
@@ -245,7 +251,11 @@ class AnalysisDataset(torch.utils.data.Dataset):
         return train_ds, val_ds, test_ds
 
     def get_times(self):
-        return [list(x['times']) for x in self.samples]
+        return [list(x["times"]) for x in self.samples]
+
+    def data(self):
+        return self.ds.data.to_numpy()
+
 
 class WeatherDataset(torch.utils.data.Dataset):
     """
