@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 import time
 import matplotlib.pyplot as plt
 import wandb
+import json
 
 from neural_lam.models.graph_lam import GraphLAM
 from neural_lam.models.hi_lam import HiLAM
@@ -248,7 +249,7 @@ def main():
             model=model, train_dataloaders=train_loader, val_dataloaders=val_loader
         )
 
-    with open(f"saved_models/{run_name}", "wt") as f:
+    with open(f"saved_models/{run_name}/args.json", "wt") as f:
         json.dump(vars(args), f, indent=4)
 
 
