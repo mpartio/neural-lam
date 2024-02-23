@@ -53,23 +53,31 @@ def main():
 
     static_dir_path = os.path.join("data", args.dataset, "static")
 
-    # Create parameter weights based on height
-    # based on fig A.1 in graph cast paper
-    # w_par = np.zeros((len(constants.param_names),))
+    # Create parameter weights based on height and parameter name
 
-    w_dict = {
-        "2": 1.0,
-        "0": 0.1,
-        "10": 0.1,
-        "1000": pressure_level_weight(1000),
-        "925": pressure_level_weight(925),
-        "850": pressure_level_weight(850),
-        "700": pressure_level_weight(700),
-        "500": pressure_level_weight(500),
-        "300": pressure_level_weight(300),
-    }
+    w_list = []
+    for par in constants.param_names:
+        name, leveln, levelv = par.split("_")
+        if leveln == "isobaricInhPa":
+            w = pressure_level_weight(int(levelv))
+            if name in ("u", "v"):
+                w = w * 0.5
+        else:
+            if name in ("ucorr", "vcorr"):
+                w = 0.5
+            elif name in ("tcorr", "rcorr", "fgcorr"):
+                w = 1.0
+            elif name == "pres" and leveln == "heightAboveSea":
+                w = 1.0
+            else:
+                w = 0.2
+        w_list.append(w)
 
-    w_list = np.array([w_dict[par.split("_")[-1]] for par in constants.param_names])
+    w_list = np.array(w_list)
+
+    assert round(np.sum(w_list), 1) == 9.6, "weights do not sum to 9.6 (sum={})".format(
+        np.sum(w_list)
+    )
 
     print("Saving parameter weights...")
 
@@ -103,7 +111,7 @@ def main():
     second_moment = torch.mean(torch.cat(squares, dim=0), dim=0)
     std = torch.sqrt(second_moment - mean**2)  # (d_features)
 
-    print("Saving mean, std.-dev, flux_stats...")
+    print("Saving mean, std.-dev...")
     torch.save(mean, os.path.join(static_dir_path, "parameter_mean.pt"))
     torch.save(std, os.path.join(static_dir_path, "parameter_std.pt"))
 
