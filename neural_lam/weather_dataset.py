@@ -18,6 +18,7 @@ class AnalysisDataset(torch.utils.data.Dataset):
         split="trainval",
         standardize=True,
         input_file=None,
+        interleave=False,
     ):
         super().__init__()
 
@@ -25,6 +26,7 @@ class AnalysisDataset(torch.utils.data.Dataset):
         self.sample_dir_path = os.path.join("data", dataset_name, "samples", split)
         self.static_dir_path = os.path.join("data", dataset_name, "static")
         self.sample_length = pred_length + 2  # 2 init states
+        self.interleave = interleave
 
         if input_file is None:
             zarr_files = glob.glob(os.path.join(self.sample_dir_path, "*.zarr"))
@@ -54,30 +56,6 @@ class AnalysisDataset(torch.utils.data.Dataset):
 
         random.shuffle(self.samples)
 
-    #    def initialize_from_npy(self):
-    #        file_regexp = "analysis-*.npy"
-    #        sample_paths = glob.glob(os.path.join(self.sample_dir_path, file_regexp))
-    #
-    #        assert len(sample_paths) > 0, "No samples found from {}".format(
-    #            self.sample_dir_path
-    #        )
-    #
-    #        self.toc = {}
-    #
-    #        for path in sample_paths:
-    #            date = dt.datetime.strptime(path.split("/")[-1][9:-4], "%Y%m%d")
-    #            for i in range(24):
-    #                self.toc[date + dt.timedelta(hours=i)] = {"path": path, "index": i}
-    #
-    #        self.samples = []
-    #        sample = []
-    #        for k, v in self.toc.items():
-    #            sample.append({k: v})
-    #
-    #            if len(sample) == self.sample_length:
-    #                self.samples.append(sample)
-    #                sample = []
-
     def initialize_from_zarr(self, filename):
         if filename.startswith("s3://"):
             import s3fs
@@ -93,9 +71,49 @@ class AnalysisDataset(torch.utils.data.Dataset):
         self.samples = []
         prev = 0
 
-        for i in range(self.sample_length, len(times) + 1, self.sample_length):
-            self.samples.append({"times": times[prev:i], "start": prev, "stop": i})
-            prev = i
+        if self.interleave == False:
+            # Each sample is a continuous sequence of length sample_length,
+            # samples do not overlap.
+            # For example if sample_length = 12, then from 24h data we get
+            # two samples.
+            #
+            # This is the default for training the model
+
+            for i in range(self.sample_length, len(times) + 1, self.sample_length):
+                self.samples.append({"times": times[prev:i], "start": prev, "stop": i})
+                prev = i
+
+        else:
+            # Each sample is a continuous sequence of length sample_length,
+            # samples overlap in a way we would expect in operational forecasting.
+            # Each sample contains two initial images, and N boundary images
+            # Next sample starts one hour later.
+            # For example if sample_length = 12, then from 24h data we get
+            # 12 samples.
+            #      0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+            #  1 : I I V V V V V V V V  V  V  V  V
+            #  2 :   I I V V V V V V V  V  V  V  V  V
+            #  3 :     I I V V V V V V  V  V  V  V  V  V
+            #  4 :       I I V V V V V  V  V  V  V  V  V  V
+            #  5 :         I I V V V V  V  V  V  V  V  V  V  V
+            #  6 :           I I V V V  V  V  V  V  V  V  V  V  V
+            #  7 :             I I V V  V  V  V  V  V  V  V  V  V  V
+            #  8 :               I I V  V  V  V  V  V  V  V  V  V  V  V
+            #  9 :               I I V  V  V  V  V  V  V  V  V  V  V  V
+            # 10 :                 I I  V  V  V  V  V  V  V  V  V  V  V  V
+            # 11 :                   I I  V  V  V  V  V  V  V  V  V  V  V  V
+            # 12 :                     I I  V  V  V  V  V  V  V  V  V  V  V  V
+            #
+            # This is the default when evaluating the model
+
+            for i in range(len(times) - self.sample_length):
+                self.samples.append(
+                    {
+                        "times": times[i : i + self.sample_length],
+                        "start": i,
+                        "stop": i + self.sample_length,
+                    }
+                )
 
         assert (
             len(self.samples) > 0
@@ -108,12 +126,6 @@ class AnalysisDataset(torch.utils.data.Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        # === Sample ===
-        #        def read_item(item):
-        #            vv = next(iter(item.values()))
-        #            data = np.load(vv["path"])[vv["index"]]
-        #            return data
-
         sample = self.samples[idx]
 
         assert self.ds is not None, "dataset not initialized"
