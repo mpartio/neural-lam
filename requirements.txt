@@ -13,3 +13,4 @@ torch_geometric
 xarray
 zarr
 s3fs
+dask
