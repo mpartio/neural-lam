@@ -27,6 +27,7 @@ class AnalysisDataset(torch.utils.data.Dataset):
         self.static_dir_path = os.path.join("data", dataset_name, "static")
         self.sample_length = pred_length + 2  # 2 init states
         self.interleave = interleave
+        self.sun_angle = None
 
         if input_file is None:
             zarr_files = glob.glob(os.path.join(self.sample_dir_path, "*.zarr"))
@@ -162,19 +163,21 @@ class AnalysisDataset(torch.utils.data.Dataset):
         # Forcing features
 
         # Sun elevation angle
-        sun_path = os.path.join(self.static_dir_path, f"sun_angle.npy")
+        if self.sun_angle is None:
+            sun_path = os.path.join(self.static_dir_path, f"sun_angle.npy")
+            self.sun_angle = np.load(sun_path)
 
-        # Datetime used is the time of the forecast hour
-        dt_obj = sample_times[0] + dt.timedelta(hours=2)
+            # Datetime used is the time of the forecast hour
+            dt_obj = sample_times[0] + dt.timedelta(hours=2)
         start_of_year = dt.datetime(dt_obj.year, 1, 1)
         hour_into_year = int((dt_obj - start_of_year).total_seconds() / 3600)
 
-        sun_angle = np.load(sun_path)[hour_into_year : hour_into_year + sample.shape[0]]
+        sun_angle = self.sun_angle[hour_into_year : hour_into_year + sample.shape[0]]
 
         # if rolling over to next year, add first hours
         if hour_into_year + sample.shape[0] > 8760:
             leftover = hour_into_year + sample.shape[0] - 8760
-            sun_angle = np.concatenate((sun_angle, np.load(sun_path)[0:leftover]))
+            sun_angle = np.concatenate((sun_angle, self.sun_angle[0:leftover]))
 
         assert sun_angle.shape[0] == sample.shape[0]
 
