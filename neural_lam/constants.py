@@ -11,6 +11,7 @@ val_step_log_errors = np.array([1, 2])  # , 5, 10, 12])
 
 # Variable names
 param_names = [
+    "effective-cloudiness_heightAboveGround_0",
     "pres_heightAboveGround_0",
     "pres_heightAboveSea_0",
     "rcorr_heightAboveGround_2",
@@ -54,7 +55,7 @@ param_names = [
 
 param_names.sort()
 
-assert len(param_names) == 39
+assert len(param_names) == 40
 param_names_short = []
 
 for p in param_names:

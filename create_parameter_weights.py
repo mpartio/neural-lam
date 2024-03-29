@@ -65,7 +65,7 @@ def main():
         else:
             if name in ("ucorr", "vcorr"):
                 w = 0.5
-            elif name in ("tcorr", "rcorr", "fgcorr"):
+            elif name in ("tcorr", "rcorr", "fgcorr", "effective-cloudiness"):
                 w = 1.0
             elif name == "pres" and leveln == "heightAboveSea":
                 w = 1.0
@@ -75,9 +75,9 @@ def main():
 
     w_list = np.array(w_list)
 
-    assert round(np.sum(w_list), 1) == 9.6, "weights do not sum to 9.6 (sum={})".format(
-        np.sum(w_list)
-    )
+    assert (
+        round(np.sum(w_list), 1) == 10.6
+    ), "weights do not sum to 10.6 (sum={})".format(np.sum(w_list))
 
     print("Saving parameter weights...")
 

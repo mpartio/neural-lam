@@ -9,6 +9,8 @@ from copy import deepcopy
 
 from neural_lam import utils, constants
 
+import numpy as np
+
 
 class AnalysisDataset(torch.utils.data.Dataset):
     def __init__(
@@ -28,23 +30,14 @@ class AnalysisDataset(torch.utils.data.Dataset):
         self.sample_length = pred_length + 2  # 2 init states
         self.interleave = interleave
         self.sun_angle = None
+        self.parameters = constants.param_names
 
         if input_file is None:
-            zarr_files = glob.glob(os.path.join(self.sample_dir_path, "*.zarr"))
-
-            assert len(zarr_files) > 0, "No samples found from {}".format(
-                self.sample_dir_path
-            )
-
-            assert len(zarr_files) == 1, "Only one zarr file per directory supported"
-
-            input_file = zarr_files[0]
+            self.initialize_from_zarr(self.sample_dir_path)
         else:
             _, extension = os.path.splitext(input_file)
-
             assert extension == ".zarr", "Only zarr files supported"
-
-        self.initialize_from_zarr(input_file)
+            self.initialize_from_zarr(input_file)
 
         # Set up for standardization
         self.standardize = standardize
@@ -64,6 +57,10 @@ class AnalysisDataset(torch.utils.data.Dataset):
             s3 = s3fs.S3FileSystem(anon=True, endpoint_url="https://lake.fmi.fi")
             store = s3fs.S3Map(root=filename, s3=s3, check=False)
             self.ds = xarray.open_zarr(store=store)
+        elif os.path.isdir(filename):
+            self.ds = xarray.open_mfdataset(
+                filename + "/*.zarr", engine="zarr", data_vars="minimal"
+            )
         else:
             self.ds = xarray.open_zarr(filename)
 
@@ -128,6 +125,7 @@ class AnalysisDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
+        indexes = np.arange(sample["start"], sample["stop"])
 
         assert self.ds is not None, "dataset not initialized"
 
@@ -136,11 +134,14 @@ class AnalysisDataset(torch.utils.data.Dataset):
             dt.datetime.strptime(str(t), "%Y-%m-%dT%H:%M:%S.000000000")
             for t in sample_times
         ]
-        sample = self.ds.data[sample["start"] : sample["stop"]]
-        sample = sample.to_numpy()
-        # (N_t, N_x, N_y, d_features')
-        sample = torch.tensor(sample, dtype=torch.float32).permute(0, 2, 3, 1)
 
+        sample = (
+            self.ds.isel(time=indexes)[self.parameters].to_array().values
+        )  # C, T, H, W
+
+        # (N_t, N_x, N_y, d_features')
+        sample = torch.tensor(sample, dtype=torch.float32).permute(1, 2, 3, 0)
+        sample = torch.permute(sample, (0, 2, 1, 3))
         _, N_x, N_y, _ = sample.shape
         N_grid = N_x * N_y
 
@@ -167,8 +168,13 @@ class AnalysisDataset(torch.utils.data.Dataset):
             sun_path = os.path.join(self.static_dir_path, f"sun_angle.npy")
             self.sun_angle = np.load(sun_path)
 
-            # Datetime used is the time of the forecast hour
-            dt_obj = sample_times[0] + dt.timedelta(hours=2)
+            assert self.sun_angle.shape[1:] == (
+                N_y,
+                N_x,
+            ), f"Sun angle shape mismatch ({self.sun_angle.shape[1:]}, {N_y, N_x})"
+
+        # Datetime used is the time of the forecast hour
+        dt_obj = sample_times[0] + dt.timedelta(hours=2)
         start_of_year = dt.datetime(dt_obj.year, 1, 1)
         hour_into_year = int((dt_obj - start_of_year).total_seconds() / 3600)
 
