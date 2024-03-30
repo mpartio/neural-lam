@@ -7,7 +7,7 @@ seconds_in_year = 365 * 24 * 60 * 60  # Assuming no leap years in dataset (2024 
 
 # Log prediction error for these lead times
 # should not be larger than ar_steps
-val_step_log_errors = np.array([1, 2])  # , 5, 10, 12])
+val_step_log_errors = np.array([1,])
 
 # Variable names
 param_names = [
