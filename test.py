@@ -495,7 +495,7 @@ def print_gpu_memory():
     )
 
 def replace_border_with_truth(border_state, predicted_state):
-
+    pass
 
 
 def test(m, ds):
