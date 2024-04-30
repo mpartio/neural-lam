@@ -14,3 +14,5 @@ xarray
 zarr
 s3fs
 dask
+rioxarray
+eccodes
