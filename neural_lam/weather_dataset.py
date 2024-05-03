@@ -5,6 +5,7 @@ import numpy as np
 import datetime as dt
 import random
 import xarray
+import einops
 from copy import deepcopy
 
 from neural_lam import utils, constants
@@ -139,14 +140,15 @@ class AnalysisDataset(torch.utils.data.Dataset):
             self.ds.isel(time=indexes)[self.parameters].to_array().values
         )  # C, T, H, W
 
-        # (N_t, N_x, N_y, d_features')
-        sample = torch.tensor(sample, dtype=torch.float32).permute(1, 2, 3, 0)
-        sample = torch.permute(sample, (0, 2, 1, 3))
-        _, N_x, N_y, _ = sample.shape
+        sample = torch.tensor(sample, dtype=torch.float32)
+        sample = einops.rearrange(sample, "c t h w -> t h w c")
+        _, N_y, N_x, _ = sample.shape
         N_grid = N_x * N_y
 
         # Flatten spatial dim
-        sample = sample.flatten(1, 2)  # (N_t, N_grid, d_features)
+        sample = einops.rearrange(
+            sample, "t h w c -> t (h w) c"
+        )  # (N_t, N_grid, d_features)
 
         if self.standardize:
             # Standardize sample
@@ -275,7 +277,10 @@ class AnalysisDataset(torch.utils.data.Dataset):
         return [list(x["times"]) for x in self.samples]
 
     def data(self):
-        return self.ds.data.to_numpy()
+        return self.ds[self.parameters].to_array().values
+
+    def get_grid_size(self):
+        return (self.ds.sizes["y"], self.ds.sizes["x"])
 
 
 class WeatherDataset(torch.utils.data.Dataset):
