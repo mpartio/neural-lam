@@ -11,6 +11,7 @@ import rioxarray
 import rasterio
 import cartopy
 import eccodes as ecc
+import einops
 from tqdm import tqdm
 from neural_lam.models.graph_lam import GraphLAM
 from neural_lam.models.hi_lam import HiLAM
@@ -106,7 +107,7 @@ def parse_args():
         action="store_true",
         help="Interleave source data",
     )
-    parser.add_argument("--output_file", type=str, default="output.grib2")
+    parser.add_argument("--output_file", type=str, default="prediction.grib2")
 
     # Evaluation options
     args = parser.parse_args()
@@ -146,7 +147,7 @@ def create_spatial_ref(x, y):
 
 
 def create_xarray(data, times, variables):
-    coords = np.load("data/meps_analysis/static/nwp_xy.npy")
+    coords = np.load(f"data/{args.dataset}/static/nwp_xy.npy")
 
     coords = (coords[0][0], coords[1].transpose()[0])
 
@@ -288,12 +289,19 @@ def save_grib(output_data, times, filepath, grib_options=None):
     bio = BytesIO()
     times = times[0]
     analysistime = dt.datetime.utcfromtimestamp(int(times[0]) / 1e9)
-    # (1, 6, 268, 238, 39)
+
     assert (
         len(times) == output_data.shape[1]
     ), "times ({}) do not match data ({})".format(len(times), output_data.shape[1])
 
     param_keys = {
+        "cf": {
+            "discipline": 0,
+            "parameterCategory": 6,
+            "parameterNumber": 32,
+            "typeOfFirstFixedSurface": 103,
+            "level": 0,
+        },
         "gust": {
             "discipline": 0,
             "parameterCategory": 2,
@@ -363,6 +371,7 @@ def save_grib(output_data, times, filepath, grib_options=None):
         return x
 
     grib_keys = [
+        pk("cf"),
         pk("gust"),
         pk("mld"),
         pk("pres"),
@@ -403,11 +412,15 @@ def save_grib(output_data, times, filepath, grib_options=None):
         pk("z", {"level": 850}),
         pk("z", {"level": 925}),
     ]
-    assert len(grib_keys) == output_data.shape[-1]
+    assert (
+        len(grib_keys) == output_data.shape[-1]
+    ), f"grib_keys do not match data {len(grib_keys)} vs {output_data.shape[-1]}"
     for i in range(len(times)):
         forecasttime = analysistime + dt.timedelta(hours=i)
 
         for j in range(0, output_data.shape[-1]):
+            param_name = constants.param_names[j]
+
             data = output_data[0, i, :, :, j]
             h = ecc.codes_grib_new_from_samples("regular_ll_sfc_grib2")
             ecc.codes_set(h, "gridType", "lambert")
@@ -439,7 +452,7 @@ def save_grib(output_data, times, filepath, grib_options=None):
 
             forecasthour = int((forecasttime - analysistime).total_seconds() / 3600)
 
-            if j == 0:
+            if constants.param_names[j] == "fgcorr_heightAboveGround_10":
                 forecasthour -= 1
 
             ecc.codes_set(h, "forecastTime", forecasthour)
@@ -494,6 +507,7 @@ def print_gpu_memory():
         )
     )
 
+
 def replace_border_with_truth(border_state, predicted_state):
     pass
 
@@ -511,7 +525,11 @@ def test(m, ds):
 
     forecasts = []
 
-    print_gpu_memory()
+    # print_gpu_memory()
+
+    (ny, nx) = ds.get_grid_size()
+    nc = len(constants.param_names)
+    # batch = (1, grid_size, len(constants.param_names))
 
     for x, y, static_features, forcing in tqdm(ds):
         prev_prev_state = x[0, :, :].unsqueeze(0).to(m.device)
@@ -520,38 +538,42 @@ def test(m, ds):
 
         # y = y * data_std + data_mean
 
-        initial_time = (
-            x[1, :, :].unsqueeze(0).reshape(1, 268, 238, 39) * data_std + data_mean
+        initial_time = x[1, :, :].unsqueeze(0)
+        initial_time = einops.rearrange(
+            initial_time, "b (h w) c -> b h w c", h=ny, w=nx
         )
 
-        prediction_list = [x[1, :, :].unsqueeze(0).reshape(1, 268, 238, 39)]
+        initial_time = initial_time * data_std + data_mean
+
+        #        prediction_list = x[1, :, :].unsqueeze(0)
+        #        prediction_list = [prediction_list.rearrange('b (h w) c -> b h w c', h=grid_size[0], w=grid_size[1])]
         prediction_list = [initial_time]
         # unroll the forecast manually to save memory
 
         for i in range(args.pred_length):
             assert prev_state.shape == (
                 1,
-                63784,
-                39,
-            ), f"prev_state.shape is {prev_state.shape}, should be (1, 63784, 39)"
+                ny * nx,
+                nc,
+            ), f"prev_state.shape is {prev_state.shape}, should be (1, {ny*nx}, {nc})"
             assert prev_prev_state.shape == (
                 1,
-                63784,
-                39,
-            ), f"prev_prev_state.shape is {prev_prev_state.shape}, should be (1, 63784, 39)"
+                ny * nx,
+                nc,
+            ), f"prev_prev_state.shape is {prev_prev_state.shape}, should be (1, {ny*nx}, {nc})"
             assert static_features.shape == (
                 1,
-                63784,
+                ny * nx,
                 1,
-            ), f"static_features.shape is {static_features.shape}, should be (1, 63784, 1)"
+            ), f"static_features.shape is {static_features.shape}, should be (1, {ny*nx}, 1)"
 
             this_forcing = forcing[i, :, :].unsqueeze(0).to(m.device)
 
             assert this_forcing.shape == (
                 1,
-                63784,
+                ny * nx,
                 15,
-            ), f"forcing.shape is {this_forcing.shape}, should be (1, 63784, 15)"
+            ), f"forcing.shape is {this_forcing.shape}, should be (1, {ny*nx}, 15)"
 
             predicted_state = m.predict_step(
                 prev_state, prev_prev_state, static_features, this_forcing
@@ -563,20 +585,6 @@ def test(m, ds):
                 new_state = replace_border_with_truth(border_state, predicted_state)
 
             new_state = border_mask * border_state + interior_mask * predicted_state
-            if False:
-                import matplotlib.pyplot as plt
-                plt.figure(1)
-                plt.imshow(border_state.reshape(1, 268, 238, 39)[0, :, :, 0])
-                plt.figure(2)
-                plt.imshow(border_mask.reshape(268, 238, 1)[:, :, 0])
-                plt.figure(3)
-                plt.imshow(predicted_state.reshape(1, 268, 238, 39)[0, :, :, 0])
-                plt.figure(4)
-                plt.imshow(interior_mask.reshape(268, 238, 1)[:, :, 0])
-                plt.figure(5)
-                plt.imshow(new_state.reshape(1, 268, 238, 39)[0, :, :, 0])
-                plt.show()
-                sys.exit(1)
             # Update conditioning states
             prev_prev_state = prev_state
             prev_state = new_state
@@ -584,7 +592,7 @@ def test(m, ds):
             output = new_state[:] * data_std + data_mean
 
             # output = border_mask * border_state + interior_mask * output
-            output = output.reshape(1, 268, 238, 39)
+            output = einops.rearrange(output, "b (h w) c -> b h w c", h=ny, w=nx)
             prediction_list.append(output)
 
             prev_state = prev_state.to(m.device)
@@ -613,13 +621,14 @@ def main():
     # Instatiate model + trainer
     if torch.cuda.is_available():
         device_name = "cuda"
-        # torch.set_float32_matmul_precision("high")  # Allows using Tensor Cores on A100s
+        torch.set_float32_matmul_precision("high")  # Allows using Tensor Cores on A100s
     else:
         device_name = "cpu"
 
     # Load model parameters Use new args for model
     model_class = MODELS[args.model]
 
+    print("Loading model from {}".format(args.load))
     m = model_class.load_from_checkpoint(
         "{}/min_val_loss.ckpt".format(args.load), args=args
     )
@@ -633,13 +642,19 @@ def main():
 
     if args.output_file[-5:] == "grib2":
         save_grib(output_data, truth_times, args.output_file)
-        truth = np.expand_dims(np.moveaxis(ds.data(), 1, -1), 0)  # (15, 39, 268, 238)
-        truth = truth[:, 1:, :, :, :]
+        truth = ds.data()  # get truth as numpy array
+        truth = einops.rearrange(
+            truth, "c t h w -> t h w c"
+        )  # rearrange so that channels is last
+        truth = truth[
+            1:, ...
+        ]  # remove first time step as it is the "prev prev" initial state
+        truth = np.expand_dims(truth, 0)  # add batch dimension to match predictions
         save_grib(truth, truth_times, "truth.grib2")
 
-    elif args.output_file[-3:] == "nc":
+    elif args.output_file[-3:] == "zarr":
         xds = create_xarray(output_data, ds.get_times(), constants.param_names)
-        xds.to_netcdf(args.output_file)
+        xds.to_zarr(args.output_file)
 
 
 if __name__ == "__main__":
